@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local replay validator for entry/main.py.
+"""Local replay validator for entry-v2/main.py.
 
 Feeds main.py the published dev window (1440 one-minute CBBTC bars)
 as agent-fun/bars-replay/v1 hello/batch/done messages, applies the
@@ -8,6 +8,13 @@ market fill model (orders decided on bar k fill at bar k+1 open:
 bar's open depth), and reports net PnL, trades, max drawdown,
 first-half / second-half PnL, and determinism (two runs, identical
 action logs).
+
+It also enforces the STRICT wire format the harness's zod schema
+demands (this is what failed rounds 1-2 of the previous entry):
+every order's u64 amounts — buy `notional_quote_units`, sell
+`qty` — must be canonical decimal STRINGS in the JSON the bot
+writes. A JSON number anywhere in those fields is a FAIL, and
+the run is rejected even if the PnL looks fine.
 
 Usage:
   python3 validate.py [--bars PATH] [--bot PATH]
@@ -35,6 +42,29 @@ def load_bars(path):
         for line in f:
             bars.append(json.loads(line))
     return bars
+
+
+def check_wire_format(orders, seq):
+    """Every u64 amount in every order must be a canonical decimal
+    string. Raises RuntimeError on the first violation."""
+    for o in orders:
+        if not isinstance(o, dict):
+            raise RuntimeError(f"seq {seq}: order is not an object: {o!r}")
+        for field in ("notional_quote_units", "qty"):
+            if field in o:
+                v = o[field]
+                if not isinstance(v, str):
+                    raise RuntimeError(
+                        f"seq {seq}: {field} is a {type(v).__name__}, "
+                        f"not a string: {v!r} (harness rejects numbers)")
+                if not v.isdigit() or str(int(v)) != v:
+                    raise RuntimeError(
+                        f"seq {seq}: {field} is not a canonical decimal "
+                        f"string: {v!r}")
+        for field in ("max_slippage_bps",):
+            if field in o and not isinstance(o[field], int):
+                raise RuntimeError(
+                    f"seq {seq}: {field} is not an int: {o[field]!r}")
 
 
 def run_bot(bot_path, bars):
@@ -136,13 +166,21 @@ def run_bot(bot_path, bars):
         reply = json.loads(line)
         assert reply.get("type") == "reply" and reply.get("seq") == k, reply
         orders = reply.get("orders") or []
+        # STRICT wire check on the raw reply, before any fill logic.
+        check_wire_format(orders, k)
         action_log.append(json.dumps(orders, sort_keys=True))
         if k < n - 1:
             pending = orders
         # else: orders on the last bar are rejected by the harness
 
-    # Final flatten at the last close.
-    if qty > 0:
+    # Final flatten at the last close, only if a real position
+    # remains (a dust remainder from float rounding is not one).
+    # NOTE: this must ADD the proceeds to cash. The round-3
+    # validator wrote `cash = proceeds` here, which zeroes the
+    # account whenever any position (or dust) is left at the end
+    # — it never triggered for round 3 only because that bot was
+    # flat at bar 1439. Fixed here.
+    if qty > 0 and qty * price(bars[-1], "c") > 0.01:
         last = bars[-1]
         close_px = price(last, "c")
         depth = depth_usd(last, "c_depth")
@@ -150,7 +188,7 @@ def run_bot(bot_path, bars):
         fill_px = close_px * (1 - SLIP_BPS) / (1 + gross / depth)
         proceeds = qty * fill_px
         proceeds -= proceeds * FEE_BPS
-        cash = proceeds
+        cash += proceeds
         qty = 0.0
     proc.stdin.write(json.dumps(
         {"type": "done", "seq": n,
@@ -199,6 +237,7 @@ def main():
     print(f"dev gate (> $0):  {'PASS' if pnl > 0 else 'FAIL'}")
     print(f"guardrails:       >=1 trade: {'yes' if trades1 >= 1 else 'no'}, "
           f"maxDD <= 25%: {'yes' if dd1 <= 0.25 else 'no'}")
+    print(f"wire format:      PASS (all u64 amounts are canonical strings)")
     print(f"determinism:      {'identical action logs (2 runs)' if log1 == log2 else 'MISMATCH'}")
     print(f"second run PnL:   ${cash2 - START_USDC:+.2f}  trades {trades2}")
     return 0 if pnl > 0 and log1 == log2 else 1

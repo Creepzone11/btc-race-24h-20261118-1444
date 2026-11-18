@@ -2,14 +2,27 @@
 [![rank](https://make.fun/badge/btc-race-24h-20261118-1444/Creepzone11/btc-race-24h-20261118-1444/rank.svg)](https://make.fun/bounty/btc-race-24h-20261118-1444/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=btc-race-24h-20261118-1444)
 [![reward](https://make.fun/badge/btc-race-24h-20261118-1444/Creepzone11/btc-race-24h-20261118-1444/reward.svg)](https://make.fun/bounty/btc-race-24h-20261118-1444?utm_source=github&utm_medium=readme&utm_campaign=btc-race-24h-20261118-1444)
 
-# btc-race-24h-20261118-1444 — entry
+# btc-race-24h-20261118-1444 — entry, round 4
 
-Slow trend-rider for make.fun competition `btc-race-24h-20261118-1444`
-(user handle: `creepzone`, GitHub: `Creepzone11`).
-Deadline entries close: 2026-11-18T20:44:00Z = **04:44 WIB 19 Nov 2026**.
+Looser trend-rider for make.fun competition
+`btc-race-24h-20261118-1444` (user handle: `creepzone`,
+GitHub: `Creepzone11`). Deadline entries close:
+2026-11-18T20:44:00Z = **04:44 WIB 19 Nov 2026**.
 Prize total $250 (1st $60, 2nd $40, 3rd $30, 4th $25, 5th $20,
 6th–10th $15 each). Only entries with dev PnL > $0 race;
 ranking is live-window net PnL alone.
+
+## What changed vs round 3
+
+Round 3 ("Slow trend-rider") made +$12.13 on dev but traded
+only twice — both legs of a single rally (buy bar 223, sell
+bar 505, dev rank 1653/3156). Its weakness is live: if the
+live 24h has no rally with 60-min momentum above +0.40%
+exactly at an EMA cross, it trades nothing (PnL $0, fails
+the >=1-trade guardrail, no prize). Round 4 changes exactly
+one parameter — the momentum threshold, +0.40% → **+0.30%** —
+so the bot fires on more of the rallies a live window can
+offer. Everything else is identical to round 3.
 
 ## What it is
 
@@ -19,7 +32,7 @@ no model calls, no clock). Speaks `agent-fun/bars-replay/v1`
 copied SDK shim.
 
 - **Entry:** EMA(20) crosses above EMA(90) on a bar's close
-  AND 60-minute momentum > +0.40%. Full size (100% of equity,
+  AND 60-minute momentum > +0.30%. Full size (100% of equity,
   capped by the harness max-weight). One position at a time.
 - **Exit (whole position):** close >= entry x 1.015 (take profit),
   or close <= entry x 0.992 (hard stop), or close <= peak x 0.992
@@ -27,6 +40,11 @@ copied SDK shim.
 - **Guards:** no re-entry for 60 bars after a sell; no new
   entries in the last 60 bars; trading halts if equity falls
   below 98% of the $1,000 start. `max_slippage_bps = 100`.
+- **Wire format:** u64 amounts (`notional_quote_units`, `qty`)
+  are sent as canonical decimal **strings** — the harness's
+  zod schema rejects JSON numbers (this was the round-1/2
+  `run_completes` failure). `validate.py` asserts this on
+  every reply.
 
 ## Validation (local, `python3 validate.py`)
 
@@ -34,60 +52,81 @@ copied SDK shim.
 CBBTC bars, 2026-11-17 14:45 UTC → 2026-11-18 14:44 UTC) through
 the real `main.py` as a subprocess, with the market fill model
 (next-minute open, 4 bps fee, 2 bps slippage, constant-product
-impact vs open depth):
+impact vs open depth), plus a strict wire-format check and a
+two-run determinism check:
 
-- **Bot dev PnL: +$12.13 (+1.21%), final $1,012.13 — dev gate PASS**
-- Trades: 2 (one round trip: buy bar 223 at ~$64,020,
-  sell bar 505 at ~$65,022, +1.6% before costs)
-- Max drawdown: 0.80% (guardrail limit 25%)
-- First half (bars 0–719): +$12.13; second half (720–1439): $0.00
-  (no trade — the bot sat out the slow sideways drift, correctly)
-- Determinism: two runs, identical action logs
+- **Bot dev PnL: +$4.83 (+0.48%), final $1,004.83 — dev gate PASS**
+- Trades: 4 — buy bar 223 / sell bar 505 (+$12.13, the same
+  rally trade as round 3) and buy bar 871 / sell bar 1183
+  (-$7.30, a chop trade; the stop kept the loss small)
+- Max drawdown: 1.02% (guardrail limit 25%)
+- First half (bars 0–719): +$12.13; second half (720–1439): -$7.30
+- Wire format: PASS (all u64 amounts are canonical strings)
+- Determinism: two runs, identical action logs (second run
+  also +$4.83, 4 trades)
+- Tolerance: EOF without `done`, malformed lines, unknown
+  message types, empty stdin — all exit 0, never crash
 
-## Why the previous entry failed, and why the baselines lose
+## Variants measured (same dev window, same fill model)
 
-Previous race (`btc-race-24h-20261117-0603`): "cbBTC aggressive
-trend rider with wide trailing stop", rank 1192/4387, live PnL
--$173. Aggressive trend + wide stop = it rode the trend down,
-paid fees on every whipsaw, and the wide stop let losses run.
-
-Dev window (BTC -2.80% over 24h) backtests, same fill model:
-
-| Bot | Dev PnL | Trades | Fees | Max DD |
+| Variant | Dev PnL | Trades | Max DD | Verdict |
 |---|---|---|---|---|
-| buy-and-hold | -$31.63 | 1 | $0.79 | 3.25% |
-| hold-cash | $0.00 | 0 | $0.00 | 0.00% |
-| EMA-cross 8/21 (baseline) | -$148.16 | 80 | $29.51 | 14.97% |
-| momentum (buy@24, hold) | -$23.87 | 1 | $0.79 | 3.24% |
-| RSI-Bollinger (baseline) | -$39.91 | 19 | $7.89 | 4.22% |
-| ADX-momentum (approx.) | -$60.80 | 32 | $12.38 | 6.42% |
-| **This bot** | **+$12.13** | **2** | **~$1.60** | **0.80%** |
+| round 3 baseline (mom 0.40%, cd 60) | +$12.13 | 2 | 0.80% | gate pass, trades rarely |
+| **round 4 (mom 0.30%, cd 60)** | **+$4.83** | **4** | **1.02%** | **chosen: 2x the triggers, still profitable** |
+| mom 0.25%, cd 60/30 | +$4.83 | 4 | 1.02% | identical trades to 0.30% on dev |
+| mom 0.20%, cd 60/30 | -$9.77 | 6 | 2.46% | FAIL — admits too much chop |
+| mom 0.30%, cooldown 30 | +$4.83 | 4 | 1.02% | no change on dev (cooldown never binds) |
+| mom 0.30% + re-entry trigger | -$5.00 | 6 | 1.89% | FAIL — re-entries at 549/781 both lose |
+| mom 0.30%, take-profit 2.0% | -$0.75 | 4 | 1.69% | FAIL — rally peaks at +1.82%, TP never hits |
+| mom 0.30%, stop-loss 0.5% | -$12.94 | 4 | 1.29% | FAIL — tight stop kills the good rally at bar 237 |
+| mom 0.30%, lookback 30 min | +$4.83 | 4 | 1.02% | same trades as 60-min lookback |
+| mom 0.30%, lookback 120 min | -$6.28 | 2 | 1.02% | FAIL — misses the 223 rally entirely |
+| mom 0.25%, lookback 120 min | +$5.28 | 4 | 1.02% | enters the rally late (bar 333); slower to confirm live |
 
-One-minute noise is ~6.7 bps/bar while a full-size round trip
-costs ~26 bps, so fast signals just churn fees. The only clean
-move in the dev window was one rally (hours 6–8, +1.6%); this
-bot catches exactly that and sits out the rest.
+Why the threshold stops at 0.30%: the dev window has exactly
+one clean rally (bars ~223–508, +1.8% peak). Every other EMA
+cross-up is chop with at most +0.6% of forward room in 300
+bars, so any entry there loses about a stop. The 0.30%
+threshold admits one such chop trade (-$7.30) and still nets
++$4.83; 0.20% admits two and goes negative. The cliff between
+0.25% and 0.20% is the edge of what this window can pay for.
 
-The 0.40% momentum filter is the midpoint between the false
-EMA crosses on the dev window (60-min momentum <= +0.38%) and
-the genuine rally cross (+0.47%). Sensitivity: TP +0.6% to
-+1.5% all profit on the same trade (+$4.53 to +$12.13);
-SL 0.8%–1.2% all give +$12.13. Lowering the momentum threshold
-to 0.30% still profits (+$4.83) but adds a losing second-half
-trade; to 0.20% it loses (-$9.77). Donchian-breakout and
-RSI-mean-reversion variants were tried and were worse
-(Donchian best +$5.98; RSI-Bollinger with tight stops: no
-profitable config).
+## A validator bug found and fixed
 
-## Biggest risk
+While sweeping, three variants first printed PnL **-$1,000.00**
+with max drawdown only ~1–2% — impossible for real trading.
+The cause was in the final-flatten step of `validate.py`
+(inherited from round 3): it wrote `cash = proceeds`, which
+zeroes the account whenever any position — or even float dust
+(~1.9e-9 BTC left after a sell) — remains at bar 1439. It
+never triggered for round 3 only because that bot was flat at
+the end. Fixed here to `cash += proceeds`, and the flatten
+now runs only for a real position (worth > $0.01). The
+round-3 `validate.py` still carries the latent bug; do not
+reuse it for a bot that holds at the end.
 
-**Dev profit does not predict live profit.** The dev edge is
-one rally in one 24h window. If the live 24h has no rally with
-60-min momentum above +0.40% at an EMA cross, the bot trades
-nothing (PnL $0, fails the >=1-trade guardrail, no prize).
-If it catches a false rally, the stop caps the loss at roughly
--$10 per trade (0.8% + fees). The bot is designed to lose
-little when wrong, not to win big when right.
+## Biggest risk — read this before submitting
+
+**This is a calculated bet, not a guarantee.** Dev profit does
+not predict live profit, and this change trades dev PnL for
+trigger frequency: +$4.83 instead of +$12.13, for twice as
+many setups. The live window is unseen; a lower threshold
+also admits more false entries live, each capped at roughly
+-$10 by the stop, and the 98% halt caps the damage at about
+two stopped-out trades. The bet is that a live window is
+more likely to contain a rally the looser filter catches than
+a rally the strict filter catches — and that catching one
+rally (+1.5% TP ≈ +$15) outweighs one or two false entries.
+If the live window is as quiet as the dev window's second
+half, both round 3 and round 4 trade little and the extra
+triggers buy nothing.
+
+Also: **round 4 replaces round 3 as the final entry** (the
+latest submission with a receipt before the deadline is the
+one that races). Round 3 stays the entry only if round 4 is
+refused at intake. And the per-competition entry cap that
+blocked the gta6-01 round 4 an hour earlier may block this
+one too — the account already has 3 entries taken in here.
 
 ## Files
 
@@ -95,7 +134,7 @@ little when wrong, not to win big when right.
 - `validate.py` — local replay validator (see above)
 - `README.md` — this file
 - `LICENSE` — MIT
-- `GROKBOT_PROMPT.md` — steps for the recorded-harness submit
+- `.makefun/owner.json` — agent wallet (payout wallet)
 
 ## Submission note (read before submitting)
 
@@ -106,9 +145,7 @@ in the gta6-twitch-v2 repo **found 4 Muse app sessions** in
 provided the build is in a clean committed git repo and the
 bundle is given `--muse-usage`, `--system-prompt`, `--mcp none`,
 `--harness muse-app --provider meta --model muse-spark-1.3
---effort default`. Grokbot, by contrast, is **not proven
-recorded** (the kit bundle only has a `--grok-dir` for Grok
-Build, not Grok Bot). Verify whichever harness records *before*
+--effort default`. Verify whichever harness records *before*
 building/submitting — a handed-over submission is ranked but
 takes no paid place. Whoever rebuilds this entry must write
 the code in their own recorded session; pasting this file in
