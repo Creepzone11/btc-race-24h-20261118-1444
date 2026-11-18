@@ -85,7 +85,7 @@ def run_bot(bot_path, bars):
         depth = depth_usd(bar, "o_depth")
         for o in pending:
             if o["side"] == "buy":
-                notional = o["notional_quote_units"] / QUOTE_UNITS_PER_USDC
+                notional = int(o["notional_quote_units"]) / QUOTE_UNITS_PER_USDC
                 notional = min(notional, cash)
                 if notional < 1.0:
                     continue
@@ -96,7 +96,7 @@ def run_bot(bot_path, bars):
                 cash -= notional
                 trades += 1
             else:  # sell
-                sell_qty = o["qty"] / 1e8
+                sell_qty = int(o["qty"]) / 1e8
                 sell_qty = min(sell_qty, qty)
                 if sell_qty <= 0:
                     continue

@@ -161,7 +161,9 @@ class Bot:
                     "side": "sell",
                     "client_id": self._client_id(),
                     "symbol": SYMBOL,
-                    "qty": self.held_qty,
+                    # u64 amounts travel as canonical decimal STRINGS on the
+                    # wire (the harness's zod schema rejects JSON numbers).
+                    "qty": str(self.held_qty),
                     "max_slippage_bps": MAX_SLIPPAGE_BPS,
                 })
                 self.last_sell_seq = self.seq
@@ -183,7 +185,10 @@ class Bot:
                             "side": "buy",
                             "client_id": self._client_id(),
                             "symbol": SYMBOL,
-                            "notional_quote_units": int(notional),
+                            # u64 amounts travel as canonical decimal STRINGS
+                            # on the wire (the harness's zod schema rejects
+                            # JSON numbers) — this was the run_completes bug.
+                            "notional_quote_units": str(int(notional)),
                             "max_slippage_bps": MAX_SLIPPAGE_BPS,
                         })
                         # Remember the entry close now; the account in
