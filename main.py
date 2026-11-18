@@ -204,15 +204,18 @@ def main():
         try:
             msg = json.loads(line.decode("utf-8"))
         except ValueError:
-            return 1
+            # A malformed line must not kill the run: skip it.
+            continue
         if not isinstance(msg, dict):
-            return 1
+            continue
         kind = msg.get("type")
         if kind == "hello":
             bot = Bot(msg)
         elif kind == "batch":
             if bot is None:
-                return 1
+                # A batch before hello: start with defaults so we can
+                # still answer it instead of exiting.
+                bot = Bot({})
             orders = bot.on_batch(msg)
             reply = {"type": "reply", "seq": int(msg.get("seq", 0)),
                      "orders": orders}
@@ -223,8 +226,10 @@ def main():
                 bot._sync_account(msg.get("account"))
             return 0
         else:
-            return 1
-    return 1
+            # Unknown message type: ignore it, never exit non-zero.
+            continue
+    # stdin closed without "done": the run still completed.
+    return 0
 
 
 if __name__ == "__main__":
